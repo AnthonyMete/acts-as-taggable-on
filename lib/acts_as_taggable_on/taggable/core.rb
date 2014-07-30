@@ -38,8 +38,8 @@ module ActsAsTaggableOn::Taggable
           end
 
           taggable_mixin.class_eval <<-RUBY, __FILE__, __LINE__ + 1
-            def #{tag_type}_list
-              tag_list_on('#{tags_type}')
+            def #{tag_type}_list(locale = I18n.locale)
+              tag_list_on('#{tags_type}', locale)
             end
 
             def #{tag_type}_list=(new_tags)
@@ -85,6 +85,10 @@ module ActsAsTaggableOn::Taggable
       #   User.tagged_with(["awesome", "cool"], :owned_by => foo ) # Users that are tagged with just awesome and cool by 'foo'
       #   User.tagged_with(["awesome", "cool"], :owned_by => foo, :start_at => Date.today ) # Users that are tagged with just awesome, cool by 'foo' and starting today
       def tagged_with(tags, options = {})
+
+        # puts "NEED TO FILTER BASED ON EN"
+        # puts I18n.locale
+
         tag_list = ActsAsTaggableOn::TagListParser.parse(tags)
         options = options.dup
         empty_result = where('1 = 0')
@@ -273,23 +277,28 @@ module ActsAsTaggableOn::Taggable
       instance_variable_defined?(variable_name) && instance_variable_get(variable_name)
     end
 
-    def tag_list_cache_on(context)
-      variable_name = "@#{context.to_s.singularize}_list"
+    def tag_list_cache_on(context, locale = I18n.locale)
+      # puts "INSIDE TAG LIST CACHE ON"
+      variable_name = "@#{context.to_s.singularize}_list_#{locale.to_s}"
       if instance_variable_get(variable_name)
+        # puts "INSIDE 1"
         instance_variable_get(variable_name)
       elsif cached_tag_list_on(context) && self.class.caching_tag_list_on?(context)
+        # puts "INSIDE 2"
         instance_variable_set(variable_name, ActsAsTaggableOn::TagListParser.parse(cached_tag_list_on(context)))
       else
-        instance_variable_set(variable_name, ActsAsTaggableOn::TagList.new(tags_on(context).map(&:name)))
+        # puts "INSIDE 3"
+        instance_variable_set(variable_name, ActsAsTaggableOn::TagList.new(tags_on(context).map(&"localized_name_#{locale.to_s}".to_sym)))
       end
     end
 
-    def tag_list_on(context)
+    def tag_list_on(context, locale= I18n.locale)
       add_custom_context(context)
-      tag_list_cache_on(context)
+      tag_list_cache_on(context, locale)
     end
 
     def all_tags_list_on(context)
+      # puts "INSIDE ALL TAGS LIST ON"
       variable_name = "@all_#{context.to_s.singularize}_list"
       return instance_variable_get(variable_name) if instance_variable_defined?(variable_name) && instance_variable_get(variable_name)
 
@@ -299,6 +308,7 @@ module ActsAsTaggableOn::Taggable
     ##
     # Returns all tags of a given context
     def all_tags_on(context)
+      # puts "INSIDE ALL TAGS ON"
       tagging_table_name = ActsAsTaggableOn::Tagging.table_name
 
       opts = ["#{tagging_table_name}.context = ?", context.to_s]
@@ -315,6 +325,7 @@ module ActsAsTaggableOn::Taggable
     ##
     # Returns all tags that are not owned of a given context
     def tags_on(context)
+      # puts "INSIDE TAGS ON"
       scope = base_tags.where(["#{ActsAsTaggableOn::Tagging.table_name}.context = ? AND #{ActsAsTaggableOn::Tagging.table_name}.tagger_id IS NULL", context.to_s])
       # when preserving tag order, return tags in created order
       # if we added the order to the association this would always apply
@@ -323,15 +334,20 @@ module ActsAsTaggableOn::Taggable
     end
 
     def set_tag_list_on(context, new_list)
-      add_custom_context(context)
+      # puts "INSIDE SET TAGS ON"
+      # puts add_custom_context(context)
 
       variable_name = "@#{context.to_s.singularize}_list"
+      # puts variable_name
       process_dirty_object(context, new_list) unless custom_contexts.include?(context.to_s)
 
       instance_variable_set(variable_name, ActsAsTaggableOn::TagListParser.parse(new_list))
+      # puts instance_variable_get(variable_name)
+      # puts variable_name
     end
 
     def tagging_contexts
+      # puts "INSIDE TAGGING CONTEXTS"
       custom_contexts + self.class.tag_types.map(&:to_s)
     end
 
@@ -369,6 +385,7 @@ module ActsAsTaggableOn::Taggable
     end
 
     def save_tags
+      # puts "INSIDE SAVE TAGS"
       tagging_contexts.each do |context|
         next unless tag_list_cache_set_on(context)
         # List of currently assigned tag names
