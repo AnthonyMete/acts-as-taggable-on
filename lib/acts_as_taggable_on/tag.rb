@@ -12,47 +12,46 @@ module ActsAsTaggableOn
     ### VALIDATIONS:
 
     validates_presence_of :name
-    validates_uniqueness_of :name, if: :validates_name_uniqueness?
+    # validates_uniqueness_of :name, if: :validates_name_uniqueness?
     validates_length_of :name, maximum: 255
 
     # monkey patch this method if don't need name uniqueness validation
     def validates_name_uniqueness?
-      true
+      false
     end
 
     ### SCOPES:
 
-    def self.named(name)
+    def self.named(name, locale = I18n.locale)
       if ActsAsTaggableOn.strict_case_match
-        where(["localized_name -> '#{I18n.locale.to_s}' = #{binary}?", as_8bit_ascii(name)])
+        where(["localized_name -> '#{locale.to_s}' = #{binary}?", as_8bit_ascii(name)])
       else
-        where(["LOWER(localized_name -> '#{I18n.locale.to_s}') = LOWER(?)", as_8bit_ascii(unicode_downcase(name))])
+        where(["LOWER(localized_name -> '#{locale.to_s}') = LOWER(?)", as_8bit_ascii(unicode_downcase(name))])
       end
     end
 
-    def self.named_any(list)
-      # puts "INSIDE NAMED ANY"
+    def self.named_any(list, locale = I18n.locale)
       if ActsAsTaggableOn.strict_case_match
         clause = list.map { |tag|
-          sanitize_sql(["localized_name -> '#{I18n.locale.to_s}' = #{binary}?", as_8bit_ascii(tag)])
+          sanitize_sql(["localized_name -> '#{locale.to_s}' = #{binary}?", as_8bit_ascii(tag)])
         }.join(' OR ')
         where(clause)
       else
         clause = list.map { |tag|
-          sanitize_sql(["LOWER(localized_name -> '#{I18n.locale.to_s}') = LOWER(?)", as_8bit_ascii(unicode_downcase(tag))])
+          sanitize_sql(["LOWER(localized_name -> '#{locale.to_s}') = LOWER(?)", as_8bit_ascii(unicode_downcase(tag))])
         }.join(' OR ')
         where(clause)
       end
     end
 
-    def self.named_like(name)
-      clause = ["name #{ActsAsTaggableOn::Utils.like_operator} ? ESCAPE '!'", "%#{ActsAsTaggableOn::Utils.escape_like(name)}%"]
+    def self.named_like(name, locale = I18n.locale)
+      clause = ["localized_name -> '#{locale.to_s}' #{ActsAsTaggableOn::Utils.like_operator} ? ESCAPE '!'", "%#{ActsAsTaggableOn::Utils.escape_like(name)}%"]
       where(clause)
     end
 
-    def self.named_like_any(list)
+    def self.named_like_any(list, locale = I18n.locale)
       clause = list.map { |tag|
-        sanitize_sql(["name #{ActsAsTaggableOn::Utils.like_operator} ? ESCAPE '!'", "%#{ActsAsTaggableOn::Utils.escape_like(tag.to_s)}%"])
+        sanitize_sql(["localized_name -> '#{locale.to_s}') #{ActsAsTaggableOn::Utils.like_operator} ? ESCAPE '!'", "%#{ActsAsTaggableOn::Utils.escape_like(tag.to_s)}%"])
       }.join(' OR ')
       where(clause)
     end
@@ -60,7 +59,6 @@ module ActsAsTaggableOn
     ### CLASS METHODS:
 
     def self.find_or_create_with_like_by_name(name)
-      # puts "FIND OR CREATE WITH LIKE BY ANY"
       if ActsAsTaggableOn.strict_case_match
         self.find_or_create_all_with_like_by_name([name]).first
       else
@@ -68,19 +66,19 @@ module ActsAsTaggableOn
       end
     end
 
-    def self.find_or_create_all_with_like_by_name(*list)
-      
+    def self.find_or_create_all_with_like_by_name(locale , *list)
+
       list = Array(list).flatten
 
       return [] if list.empty?
 
-      existing_tags = named_any(list)
+      existing_tags = named_any(list, locale)
 
       list.map do |tag_name|
         comparable_tag_name = comparable_name(tag_name)
-        existing_tag = existing_tags.find { |tag| comparable_name(tag.localized_name) == comparable_tag_name }
+        existing_tag = existing_tags.find { |tag| comparable_name(tag.send("localized_name_#{locale.to_s}".to_sym)) == comparable_tag_name }
         begin
-          existing_tag || create(name: tag_name, "localized_name_#{I18n.locale}".to_s => tag_name, is_accessible: false)
+          existing_tag || create(name: tag_name, "localized_name_#{locale}".to_s => tag_name, is_accessible: false)
         rescue ActiveRecord::RecordNotUnique
           # Postgres aborts the current transaction with
           # PG::InFailedSqlTransaction: ERROR:  current transaction is aborted, commands ignored until end of transaction block

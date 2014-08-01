@@ -43,13 +43,27 @@ module ActsAsTaggableOn::Taggable
             end
 
             def #{tag_type}_list=(new_tags)
-              set_tag_list_on('#{tags_type}', new_tags)
+              set_tag_list_on('#{tags_type}', new_tags, I18n.locale)
             end
 
-            def all_#{tags_type}_list
-              all_tags_list_on('#{tags_type}')
+            def all_#{tags_type}_list(locale = I18n.locale)
+              all_tags_list_on('#{tags_type}', locale)
             end
           RUBY
+
+          I18n.available_locales.each do |locale|
+            taggable_mixin.class_eval <<-RUBY, __FILE__, __LINE__ + 1
+              def #{tag_type}_list_#{locale.to_s}
+                tag_list_on('#{tags_type}', '#{locale}')
+              end
+
+              def #{tag_type}_list_#{locale.to_s}=(new_tags)
+                set_tag_list_on('#{tags_type}', new_tags, '#{locale}')
+              end
+
+            RUBY
+          end
+
         end
       end
 
@@ -85,9 +99,6 @@ module ActsAsTaggableOn::Taggable
       #   User.tagged_with(["awesome", "cool"], :owned_by => foo ) # Users that are tagged with just awesome and cool by 'foo'
       #   User.tagged_with(["awesome", "cool"], :owned_by => foo, :start_at => Date.today ) # Users that are tagged with just awesome, cool by 'foo' and starting today
       def tagged_with(tags, options = {})
-
-        # puts "NEED TO FILTER BASED ON EN"
-        # puts I18n.locale
 
         tag_list = ActsAsTaggableOn::TagListParser.parse(tags)
         options = options.dup
@@ -268,27 +279,23 @@ module ActsAsTaggableOn::Taggable
       custom_contexts << value.to_s unless custom_contexts.include?(value.to_s) or self.class.tag_types.map(&:to_s).include?(value.to_s)
     end
 
-    def cached_tag_list_on(context)
-      self["cached_#{context.to_s.singularize}_list"]
+    def cached_tag_list_on(context, locale = I18n.locale)
+      self["cached_#{context.to_s.singularize}_list_#{locale.to_s}"]
     end
 
-    def tag_list_cache_set_on(context)
-      variable_name = "@#{context.to_s.singularize}_list"
+    def tag_list_cache_set_on(context, locale = I18n.locale)
+      variable_name = "@#{context.to_s.singularize}_list_#{locale.to_s}"
       instance_variable_defined?(variable_name) && instance_variable_get(variable_name)
     end
 
     def tag_list_cache_on(context, locale = I18n.locale)
-      # puts "INSIDE TAG LIST CACHE ON"
       variable_name = "@#{context.to_s.singularize}_list_#{locale.to_s}"
       if instance_variable_get(variable_name)
-        # puts "INSIDE 1"
         instance_variable_get(variable_name)
       elsif cached_tag_list_on(context) && self.class.caching_tag_list_on?(context)
-        # puts "INSIDE 2"
         instance_variable_set(variable_name, ActsAsTaggableOn::TagListParser.parse(cached_tag_list_on(context)))
       else
-        # puts "INSIDE 3"
-        instance_variable_set(variable_name, ActsAsTaggableOn::TagList.new(tags_on(context).map(&"localized_name_#{locale.to_s}".to_sym)))
+        instance_variable_set(variable_name, ActsAsTaggableOn::TagList.new(tags_on(context, locale).map(&"localized_name_#{locale.to_s}".to_sym)))
       end
     end
 
@@ -297,18 +304,16 @@ module ActsAsTaggableOn::Taggable
       tag_list_cache_on(context, locale)
     end
 
-    def all_tags_list_on(context)
-      # puts "INSIDE ALL TAGS LIST ON"
-      variable_name = "@all_#{context.to_s.singularize}_list"
+    def all_tags_list_on(context, locale)
+      variable_name = "@all_#{context.to_s.singularize}_list_#{locale.to_s}"
       return instance_variable_get(variable_name) if instance_variable_defined?(variable_name) && instance_variable_get(variable_name)
 
-      instance_variable_set(variable_name, ActsAsTaggableOn::TagList.new(all_tags_on(context).map(&:name)).freeze)
+      instance_variable_set(variable_name, ActsAsTaggableOn::TagList.new(all_tags_on(context).map(&"localized_name_#{locale.to_s}".to_sym)).freeze)
     end
 
     ##
     # Returns all tags of a given context
     def all_tags_on(context)
-      # puts "INSIDE ALL TAGS ON"
       tagging_table_name = ActsAsTaggableOn::Tagging.table_name
 
       opts = ["#{tagging_table_name}.context = ?", context.to_s]
@@ -324,36 +329,28 @@ module ActsAsTaggableOn::Taggable
 
     ##
     # Returns all tags that are not owned of a given context
-    def tags_on(context)
-      # puts "INSIDE TAGS ON"
-      scope = base_tags.where(["#{ActsAsTaggableOn::Tagging.table_name}.context = ? AND #{ActsAsTaggableOn::Tagging.table_name}.tagger_id IS NULL", context.to_s])
+    def tags_on(context, locale = I18n.locale)
+      scope = base_tags.where(["#{ActsAsTaggableOn::Tagging.table_name}.context = ? AND #{ActsAsTaggableOn::Tagging.table_name}.tagger_id IS NULL AND #{ActsAsTaggableOn::Tag.table_name}.localized_name -> '#{locale.to_s}' <> ''", context.to_s])
+      
       # when preserving tag order, return tags in created order
       # if we added the order to the association this would always apply
       scope = scope.order("#{ActsAsTaggableOn::Tagging.table_name}.id") if self.class.preserve_tag_order?
       scope
     end
 
-    def set_tag_list_on(context, new_list)
-      # puts "INSIDE SET TAGS ON"
-      # puts add_custom_context(context)
-
-      variable_name = "@#{context.to_s.singularize}_list"
-      # puts variable_name
-      process_dirty_object(context, new_list) unless custom_contexts.include?(context.to_s)
-
+    def set_tag_list_on(context, new_list, locale)
+      variable_name = "@#{context.to_s.singularize}_list_#{locale.to_s}"
+      process_dirty_object(context, new_list, locale) unless custom_contexts.include?(context.to_s)
       instance_variable_set(variable_name, ActsAsTaggableOn::TagListParser.parse(new_list))
-      # puts instance_variable_get(variable_name)
-      # puts variable_name
     end
 
     def tagging_contexts
-      # puts "INSIDE TAGGING CONTEXTS"
       custom_contexts + self.class.tag_types.map(&:to_s)
     end
 
-    def process_dirty_object(context, new_list)
+    def process_dirty_object(context, new_list, locale)
       value = new_list.is_a?(Array) ? ActsAsTaggableOn::TagList.new(new_list) : new_list
-      attrib = "#{context.to_s.singularize}_list"
+      attrib = "#{context.to_s.singularize}_list_#{locale.to_s}"
 
       if changed_attributes.include?(attrib)
         # The attribute already has an unsaved change.
@@ -370,9 +367,11 @@ module ActsAsTaggableOn::Taggable
     end
 
     def reload(*args)
-      self.class.tag_types.each do |context|
-        instance_variable_set("@#{context.to_s.singularize}_list", nil)
-        instance_variable_set("@all_#{context.to_s.singularize}_list", nil)
+      I18n.available_locales.each do |locale|
+        self.class.tag_types.each do |context|
+          instance_variable_set("@#{context.to_s.singularize}_list_#{locale.to_s}", nil)
+          instance_variable_set("@all_#{context.to_s.singularize}_list_#{locale.to_s}", nil)
+        end
       end
 
       super(*args)
@@ -380,45 +379,56 @@ module ActsAsTaggableOn::Taggable
 
     ##
     # Find existing tags or create non-existing tags
-    def load_tags(tag_list)
-      ActsAsTaggableOn::Tag.find_or_create_all_with_like_by_name(tag_list)
+    def load_tags(tag_list, locale = false)    
+      ActsAsTaggableOn::Tag.find_or_create_all_with_like_by_name(locale, tag_list)
     end
 
     def save_tags
-      # puts "INSIDE SAVE TAGS"
+
       tagging_contexts.each do |context|
-        next unless tag_list_cache_set_on(context)
-        # List of currently assigned tag names
-        tag_list = tag_list_cache_on(context).uniq
 
-        # Find existing tags or create non-existing tags:
-        tags = find_or_create_tags_from_list_with_context(tag_list, context)
+        @total_tags = []
+        @total_current_tags = []
+        
 
-        # Tag objects for currently assigned tags
-        current_tags = tags_on(context)
+        I18n.available_locales.each do |locale|
+
+          next unless tag_list_cache_set_on(context, locale)
+          # List of currently assigned tag names
+          tag_list = tag_list_cache_on(context, locale).uniq
+
+          # Find existing tags or create non-existing tags:
+          tags = find_or_create_tags_from_list_with_context(tag_list, context, locale)
+          @total_tags |= tags
+
+          # Tag objects for currently assigned tags
+          current_tags = tags_on(context, locale)
+          @total_current_tags |= current_tags
+
+        end          
 
         # Tag maintenance based on whether preserving the created order of tags
         if self.class.preserve_tag_order?
-          old_tags, new_tags = current_tags - tags, tags - current_tags
+          old_tags, new_tags = @total_current_tags - @total_tags, @total_tags - @total_current_tags
 
-          shared_tags = current_tags & tags
+          shared_tags = @total_current_tags & @total_tags
 
-          if shared_tags.any? && tags[0...shared_tags.size] != shared_tags
-            index = shared_tags.each_with_index { |_, i| break i unless shared_tags[i] == tags[i] }
+          if shared_tags.any? && @total_tags[0...shared_tags.size] != shared_tags
+            index = shared_tags.each_with_index { |_, i| break i unless shared_tags[i] == @total_tags[i] }
 
             # Update arrays of tag objects
-            old_tags |= current_tags[index...current_tags.size]
-            new_tags |= current_tags[index...current_tags.size] & shared_tags
+            old_tags |= @total_current_tags[index...@total_current_tags.size]
+            new_tags |= @total_current_tags[index...@total_current_tags.size] & shared_tags
 
             # Order the array of tag objects to match the tag list
-            new_tags = tags.map do |t|
+            new_tags = @total_tags.map do |t|
               new_tags.find { |n| n.name.downcase == t.name.downcase }
             end.compact
           end
         else
           # Delete discarded tags and create new tags
-          old_tags = current_tags - tags
-          new_tags = tags - current_tags
+          old_tags = @total_current_tags - @total_tags
+          new_tags = @total_tags - @total_current_tags
         end
 
         # Destroy old taggings:
@@ -430,6 +440,7 @@ module ActsAsTaggableOn::Taggable
         new_tags.each do |tag|
           taggings.create!(tag_id: tag.id, context: context.to_s, taggable: self)
         end
+        
       end
 
       true
@@ -456,8 +467,8 @@ module ActsAsTaggableOn::Taggable
     #
     # @param [Array<String>] tag_list Tags to find or create
     # @param [Symbol] context The tag context for the tag_list
-    def find_or_create_tags_from_list_with_context(tag_list, _context)
-      load_tags(tag_list)
+    def find_or_create_tags_from_list_with_context(tag_list, _context, locale = false)
+      locale ? load_tags(tag_list, locale) : load_tags(tag_list)
     end
   end
 end
